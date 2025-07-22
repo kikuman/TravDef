@@ -2,6 +2,10 @@ import { PrismaClient } from '@prisma/client'
 
 const prisma = new PrismaClient()
 
+function parseBangkokDate(str) {
+  return new Date(`${str}+07:00`)
+}
+
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' })
   const { defender, attacker, landing, firstSeen, tribe, reporter } = req.body
@@ -13,8 +17,8 @@ export default async function handler(req, res) {
       data: {
         defenderCoords: defender,
         attackerCoords: attacker,
-        landingTime: new Date(landing),
-        firstSeenTime: new Date(firstSeen),
+        landingTime: parseBangkokDate(landing),
+        firstSeenTime: parseBangkokDate(firstSeen),
         tribe,
         reporter,
       },
