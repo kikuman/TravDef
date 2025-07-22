@@ -111,6 +111,13 @@ export default function Home() {
     const data = await res.json()
     if (res.ok) {
       setResult(data)
+      const params = new URLSearchParams({
+        defender: form.defender,
+        attacker: form.attacker,
+        landing: form.landing,
+        tribe: form.tribe,
+      })
+      window.open(`/report?${params.toString()}`, '_blank')
     } else {
       alert(data.error || 'Error')
     }
