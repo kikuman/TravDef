@@ -2,7 +2,21 @@ import { PrismaClient } from '@prisma/client'
 
 const prisma = new PrismaClient()
 
+function parseBangkokDate(str) {
+  return new Date(`${str}+07:00`)
+}
+
 export default async function handler(req, res) {
+  if (req.method === 'GET') {
+    try {
+      const reports = await prisma.attackReport.findMany({ orderBy: { id: 'desc' } })
+      res.status(200).json({ reports })
+    } catch (e) {
+      console.error(e)
+      res.status(500).json({ error: 'Failed to load reports' })
+    }
+    return
+  }
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' })
   const { defender, attacker, landing, firstSeen, tribe, reporter } = req.body
   try {
@@ -13,8 +27,8 @@ export default async function handler(req, res) {
       data: {
         defenderCoords: defender,
         attackerCoords: attacker,
-        landingTime: new Date(landing),
-        firstSeenTime: new Date(firstSeen),
+        landingTime: parseBangkokDate(landing),
+        firstSeenTime: parseBangkokDate(firstSeen),
         tribe,
         reporter,
       },
