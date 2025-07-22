@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 
 const troopSpeeds = {
   Teuton: [
@@ -58,6 +58,43 @@ function formatTime(hours) {
   return `${h}h ${m}m`
 }
 
+
+function parseBangkokDate(str) {
+  // treat the given local datetime string as being in the Asia/Bangkok timezone
+  return new Date(`${str}+07:00`)
+}
+
+function gatherEligibleVillages(mapData, defenderCoords, landing) {
+  const defVillage = mapData.find(v => v.x === defenderCoords.x && v.y === defenderCoords.y)
+  if (!defVillage) return { alliance: '', villages: [] }
+  const alliance = defVillage.alliance
+  const selectedUnits = ['Spearman', 'Paladin', 'Praetorian', 'Equites Caesaris', 'Phalanx', 'Druidrider']
+  const speedLookup = {}
+  Object.values(troopSpeeds).flat().forEach(t => {
+    speedLookup[t.name] = t.speed
+  })
+  // use current time in Thailand regardless of the user's timezone
+  const now = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Bangkok' }))
+  const landingTime = typeof landing === 'string' ? parseBangkokDate(landing) : landing
+  const villages = []
+  mapData.forEach(v => {
+    if (v.alliance !== alliance) return
+    const dist = travianDistance(defenderCoords, { x: v.x, y: v.y })
+    let best = null
+    selectedUnits.forEach(u => {
+      const hours = dist / speedLookup[u]
+      const arrive = now.getTime() + hours * 3600 * 1000
+      if (arrive <= landingTime.getTime()) {
+        if (!best || hours < best.hours) best = { unit: u, hours }
+      }
+    })
+    if (best) {
+      villages.push({ ...v, unit: best.unit, time: formatTime(best.hours) })
+    }
+  })
+  return { alliance, villages }
+}
+
 export default function Home() {
   const [activeTab, setActiveTab] = useState('report')
   const [form, setForm] = useState({
@@ -73,6 +110,10 @@ export default function Home() {
   const [loadingMap, setLoadingMap] = useState(false)
   const [attackerVillage, setAttackerVillage] = useState('')
   const [defenderVillage, setDefenderVillage] = useState('')
+  const [defenderAlliance, setDefenderAlliance] = useState('')
+  const [eligibleVillages, setEligibleVillages] = useState([])
+  const [reports, setReports] = useState([])
+  const [defenseReportId, setDefenseReportId] = useState(null)
 
   const handleChange = e => {
     setForm({ ...form, [e.target.name]: e.target.value })
@@ -80,7 +121,10 @@ export default function Home() {
       const coords = parseCoordsInput(e.target.value)
       const village = coords ? mapData.find(v => v.x === coords.x && v.y === coords.y) : null
       if (e.target.name === 'attacker') setAttackerVillage(village ? village.villageName : '')
-      if (e.target.name === 'defender') setDefenderVillage(village ? village.villageName : '')
+      if (e.target.name === 'defender') {
+        setDefenderVillage(village ? village.villageName : '')
+        setDefenderAlliance(village ? village.alliance : '')
+      }
     }
   }
 
@@ -101,8 +145,76 @@ export default function Home() {
     }
   }
 
+  const fetchReports = async () => {
+    try {
+      const res = await fetch('/api/report')
+      const data = await res.json()
+      if (res.ok) {
+        const formatted = data.reports.map(r => {
+          const d1 = parseCoordsInput(r.defenderCoords)
+          const d2 = parseCoordsInput(r.attackerCoords)
+          const distance = travianDistance(d1, d2)
+          const times = troopSpeeds[r.tribe].map(t => ({
+            name: t.name,
+            time: formatTime(distance / t.speed),
+          }))
+          return {
+            id: r.id,
+            defender: r.defenderCoords,
+            attacker: r.attackerCoords,
+            landing: r.landingTime,
+            firstSeen: r.firstSeenTime,
+            tribe: r.tribe,
+            reporter: r.reporter,
+            distance,
+            times,
+          }
+        })
+        setReports(formatted)
+      } else {
+        alert(data.error || 'Failed to load reports')
+      }
+    } catch (e) {
+      alert('Failed to load reports')
+    }
+  }
+
+  useEffect(() => {
+    fetchReports()
+  }, [])
+
+  const handleFindDefense = report => {
+    if (!mapData.length) {
+      alert('Please load map data first')
+      return
+    }
+    const coords = parseCoordsInput(report.defender)
+    const { alliance, villages } = gatherEligibleVillages(mapData, coords, report.landing)
+    setDefenderAlliance(alliance)
+    setEligibleVillages(villages)
+    setDefenseReportId(report.id)
+  }
+
   const handleSubmit = async e => {
     e.preventDefault()
+    let currentMap = mapData
+    if (!currentMap.length) {
+      setLoadingMap(true)
+      try {
+        const mres = await fetch('/api/map')
+        const mdata = await mres.json()
+        if (mres.ok) {
+          setMapData(mdata.villages)
+          currentMap = mdata.villages
+        } else {
+          alert(mdata.error || 'Failed to load map data')
+        }
+      } catch (err) {
+        alert('Failed to load map data')
+      } finally {
+        setLoadingMap(false)
+      }
+    }
     const res = await fetch('/api/report', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -110,7 +222,31 @@ export default function Home() {
     })
     const data = await res.json()
     if (res.ok) {
+      const newReport = {
+        id: data.id,
+        defender: form.defender,
+        attacker: form.attacker,
+        landing: form.landing,
+        firstSeen: form.firstSeen,
+        tribe: form.tribe,
+        reporter: form.reporter,
+        distance: data.distance,
+        times: data.times,
+      }
+      setReports([newReport, ...reports])
       setResult(data)
+      const coords = parseCoordsInput(form.defender)
+      if (coords && currentMap.length) {
+        const { alliance, villages } = gatherEligibleVillages(currentMap, coords, form.landing)
+        setDefenderAlliance(alliance)
+        setEligibleVillages(villages)
+        setDefenseReportId(newReport.id)
+      } else {
+        setDefenderAlliance('')
+        setEligibleVillages([])
+        setDefenseReportId(null)
+      }
+      setActiveTab('reports')
     } else {
       alert(data.error || 'Error')
     }
@@ -122,6 +258,7 @@ export default function Home() {
         <div className="space-x-2">
           <button onClick={() => setActiveTab('report')} className={activeTab === 'report' ? 'font-bold' : ''}>Report</button>
           <button onClick={() => setActiveTab('map')} className={activeTab === 'map' ? 'font-bold' : ''}>Map Data</button>
+          <button onClick={() => setActiveTab('reports')} className={activeTab === 'reports' ? 'font-bold' : ''}>Attack Reports</button>
         </div>
         <button onClick={loadMapData} className="bg-green-500 text-white px-2 py-1">
           {loadingMap ? 'Loading...' : 'Load Map Data'}
@@ -186,6 +323,66 @@ export default function Home() {
               </tbody>
             </table>
           </div>
+        </div>
+      )}
+      {activeTab === 'reports' && (
+        <div>
+          <p className="mb-2">Reports saved: {reports.length}</p>
+          <div className="overflow-auto max-h-96 border mb-4">
+            <table className="min-w-full text-sm">
+              <thead>
+                <tr>
+                  <th className="px-2 py-1 border">Defender</th>
+                  <th className="px-2 py-1 border">Attacker</th>
+                  <th className="px-2 py-1 border">Landing</th>
+                  <th className="px-2 py-1 border">Distance</th>
+                  <th className="px-2 py-1 border">Action</th>
+                </tr>
+              </thead>
+              <tbody>
+                {reports.map(r => (
+                  <tr key={r.id} className="hover:bg-gray-100">
+                    <td className="border px-2 py-1">{r.defender}</td>
+                    <td className="border px-2 py-1">{r.attacker}</td>
+                    <td className="border px-2 py-1">{new Date(r.landing).toLocaleString('en-US', { timeZone: 'Asia/Bangkok' })}</td>
+                    <td className="border px-2 py-1">{r.distance.toFixed(2)}</td>
+                    <td className="border px-2 py-1 text-center">
+                      <button className="underline text-blue-600" onClick={() => handleFindDefense(r)}>Find Defense</button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {eligibleVillages.length > 0 && defenseReportId && (
+            <div>
+              <p className="mb-2">Villages in alliance {defenderAlliance} that can arrive in time: {eligibleVillages.length}</p>
+              <div className="overflow-auto max-h-96 border">
+                <table className="min-w-full text-sm">
+                  <thead>
+                    <tr>
+                      <th className="px-2 py-1 border">Village</th>
+                      <th className="px-2 py-1 border">Player</th>
+                      <th className="px-2 py-1 border">Coords</th>
+                      <th className="px-2 py-1 border">Unit</th>
+                      <th className="px-2 py-1 border">Travel Time</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {eligibleVillages.map((v, idx) => (
+                      <tr key={idx}>
+                        <td className="border px-2 py-1">{v.villageName}</td>
+                        <td className="border px-2 py-1">{v.playerName}</td>
+                        <td className="border px-2 py-1">({v.x}|{v.y})</td>
+                        <td className="border px-2 py-1">{v.unit}</td>
+                        <td className="border px-2 py-1">{v.time}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>
