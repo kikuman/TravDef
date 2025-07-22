@@ -111,6 +111,8 @@ export default function Home() {
     const data = await res.json()
     if (res.ok) {
       setResult(data)
+      const payload = { form, result: data }
+      window.open(`/result?data=${encodeURIComponent(JSON.stringify(payload))}`, '_blank')
     } else {
       alert(data.error || 'Error')
     }
