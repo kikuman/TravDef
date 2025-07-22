@@ -2,31 +2,46 @@ import { PrismaClient } from '@prisma/client'
 
 const prisma = new PrismaClient()
 
+function parseBangkokDate(str) {
+  return new Date(`${str}+07:00`)
+}
+
 export default async function handler(req, res) {
-  if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' })
-  const { defender, attacker, landing, firstSeen, tribe, reporter } = req.body
-  try {
-    const d1 = parseCoords(defender)
-    const d2 = parseCoords(attacker)
-    const distance = travianDistance(d1, d2)
-    const report = await prisma.attackReport.create({
-      data: {
-        defenderCoords: defender,
-        attackerCoords: attacker,
-        landingTime: new Date(landing),
-        firstSeenTime: new Date(firstSeen),
-        tribe,
-        reporter,
-      },
-    })
-    const times = troopSpeeds[tribe].map(t => ({
-      name: t.name,
-      time: formatTime(distance / t.speed),
-    }))
-    res.json({ id: report.id, distance, times })
-  } catch (e) {
-    console.error(e)
-    res.status(500).json({ error: 'Failed to save report' })
+  if (req.method === 'POST') {
+    const { defender, attacker, landing, firstSeen, tribe, reporter } = req.body
+    try {
+      const d1 = parseCoords(defender)
+      const d2 = parseCoords(attacker)
+      const distance = travianDistance(d1, d2)
+      const report = await prisma.attackReport.create({
+        data: {
+          defenderCoords: defender,
+          attackerCoords: attacker,
+          landingTime: parseBangkokDate(landing),
+          firstSeenTime: parseBangkokDate(firstSeen),
+          tribe,
+          reporter,
+        },
+      })
+      const times = troopSpeeds[tribe].map(t => ({
+        name: t.name,
+        time: formatTime(distance / t.speed),
+      }))
+      res.json({ id: report.id, distance, times })
+    } catch (e) {
+      console.error(e)
+      res.status(500).json({ error: 'Failed to save report' })
+    }
+  } else if (req.method === 'GET') {
+    try {
+      const reports = await prisma.attackReport.findMany({ orderBy: { createdAt: 'desc' } })
+      res.json({ reports })
+    } catch (e) {
+      console.error(e)
+      res.status(500).json({ error: 'Failed to load reports' })
+    }
+  } else {
+    res.status(405).json({ error: 'Method not allowed' })
   }
 }
 
