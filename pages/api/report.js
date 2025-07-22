@@ -31,8 +31,9 @@ export default async function handler(req, res) {
 }
 
 function parseCoords(coords) {
-  const [x, y] = coords.split('|').map(Number)
-  return { x, y }
+  const m = coords.match(/(-?\d+)\s*[|,\/]\s*(-?\d+)/)
+  if (!m) throw new Error('Invalid coords')
+  return { x: Number(m[1]), y: Number(m[2]) }
 }
 
 function travianDistance(d1, d2) {
